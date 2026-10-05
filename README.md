@@ -95,9 +95,9 @@ sudo docker rm RL_GraphVAE --force
 If used in research, cite:
 
 ```bibtex
-@software{rl_graphvae,
-  title={RL-GraphVAE for Target-Biased Molecular Discovery},
+  software={RL-GraphVAE},
+  title={Generative AI-Assisted Molecular Design of AChEIs},
   author={Dhairiya Agarwal, Prabha Garga},
   year={2026}
-}
+  DOI:{https://doi.org/10.1021/acs.jcim.6c02233}
 ```
