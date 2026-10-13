@@ -14,46 +14,79 @@ The workflow combines:
 # Architecture Overview
 
 ```text
-RL_GraphVAE Driven Molecular Generation
-
-GraphVAE_training.py
-│  status = 'train'
-│  Graph_VAE.Chem_VAE (encoder + decoder trained jointly)
-│  Saves: model.iter-{epoch}
+RL-GraphVAE-Driven Molecular Generation
 │
-│  Loss = λ_t·L_topo + λ_b·L_bond + λ_l·L_label
-│       + λ_r·L_root + λ_m·L_mol + β·KL
-│
+├── PART I: GraphVAE Pretraining
+│   GraphVAE_training
+│   ├── GraphVAE
+│   │   ├── Encoder: Molecular graph x → latent representation z
+│   │   └── Decoder: Latent representation z → reconstructed graph
+│   ├── Jointly train encoder and decoder
+│   ├── Total pretraining loss:
+│   │   L_pre = λ_t·L_topo + λ_b·L_bond + λ_l·L_label
+│   │           + λ_r·L_root + λ_m·L_mol + β·L_KL
+│   └── Save pretrained model checkpoints
+│       └── model.iter-{epoch}
 ▼
 [Pretrained checkpoint: model.iter-N]
-│
 ▼
-RL_GraphVAE_decoder_training.py
-   status = 'rl_train'
-   Loads pretrained weights
-   (Attempts to) freeze encoder
-   │
-   ├── Graph_VAE.encoder() → z₀, mean, log_var
-   │   [frozen - intended]
-   │
-   └── Graph_VAE.decoder(status='rl_train')
-       ├── _stochastic_label_prediction_1(z₀) → root
-       ├── z₁ = tanh(update_fc(z₀ + update_z(...)))
-       ├── _stochastic_topo_prediction(z₁)
-       ├── _stochastic_bond_prediction(z₁)
-       ├── _stochastic_label_prediction(z₁)
-       ├── connect_smiles() → dec_smi
-       └── z₂ = tanh(update_fc(z₁ + update_z(...)))
-       ...
-       └── log_prob_sum = Σ log π_θ(a_t|z_t)
-   │
-   ├── XGBoostRewardModel.predict(dec_smi)
-   │   └── reward, p_active, p_inactive
-   │
-   ├── kl_loss = -0.5·Σ(1 + log_var - mean² - exp(log_var))
-   ├── advantage = reward - baseline
-   ├── pg_loss = -(advantage · log_prob_sum)
-   └── total_loss = rl_weight·pg_loss + kl_beta·kl_loss
+├── PART II: Reinforcement Learning Fine-Tuning
+│   RL_GraphVAE_decoder_training
+│   ├── Load pretrained GraphVAE weights
+│   ├── Encoder: Graph_VAE.encoder()
+│   │   ├── Input: Molecular graph x
+│   │   ├── Output: z₀, mean (μ), log_var (log σ²)
+│   │   └── Sample latent: z₀ ~ qφ(z|x) Encoder parameters φ: remain frozen
+│   └── Decoder: Graph_VAE.decoder()
+│       │  Decoder acts as a stochastic molecular-generation policy
+│       ├── 1. Root selection
+│       │   └── _stochastic_label_prediction_1(z₀) → root atom
+│       ├── 2. Latent-state update
+│       │   └── z₁ = tanh(update_fc(z₀ + update_z(...)))
+│       ├── 3. Sequential graph construction
+│       │   ├── _stochastic_topo_prediction(z₁)
+│       │   │   └── Predict molecular graph topology
+│       │   ├── _stochastic_bond_prediction(z₁)
+│       │   │   └── Predict bond types
+│       │   ├── _stochastic_label_prediction(z₁)
+│       │   │   └── Predict atom/substructure labels
+│       │   └── Update latent state using graph context:
+│       │       z₍ₜ₊₁₎ = tanh(W_z zₜ + W_h hₜ + b)
+│       ├── 4. Continue sequential generation
+│       │   ├── Repeat graph-generation actions
+│       │   ├── Update latent state at each step
+│       │   ├── Apply backtracking when required
+│       │   ├── connect_smiles() → dec_smi
+│       │   └── Accumulate action log-probabilities:
+│       │       log_prob_sum = Σₜ log πθ(aₜ|zₜ)
+│       ▼
+│   [Generated molecular SMILES: dec_smi]
+│       ▼
+│   ├── Biological Activity-Based Reward
+│   │   XGBoostRewardModel.predict(dec_smi)
+│   │   ├── Predict p_active and p_inactive
+│   │   └── Assign molecular reward:
+│   │       r(x) = Pψ(active|x)
+│   ▼
+├── Advantage Estimation
+│   ├── Calculate advantage using the current baseline:
+│   │   A(x) = r(x) − b
+│   └── Update baseline for subsequent samples:
+│       b_new = λ·b + (1 − λ)·r(x)
+▼
+├── Reinforcement-Learning Optimization
+│   ├── Policy-gradient loss (REINFORCE):
+│   │   L_PG = −A(x) · log_prob_sum
+│   ├── KL-divergence loss:
+│   │   L_KL = −0.5·Σ[1 + log_var − mean² − exp(log_var)]
+│   ├── Combined objective:
+│   │   L_total = rl_weight·L_PG + kl_beta·L_KL
+│   └── Update trainable parameters using gradients:
+│       θ ← θ − η·∇θ L_total
+│       (Decoder parameters are intended to be optimized)
+▼
+[Repeat Generation → Reward Evaluation → Optimization]
+
 ```
 
 ---
